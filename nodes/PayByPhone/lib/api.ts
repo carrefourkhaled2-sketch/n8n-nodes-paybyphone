@@ -240,6 +240,53 @@ export class PayByPhoneAPI {
 		return this.removeGraphQLMetadata(createQuotes.createQuotesResponse);
 	}
 
+	async stopParkingSession(
+		helpers: N8nHelpers,
+		accessToken: string,
+		parkingSessionId: string,
+	): Promise<any> {
+		// The API also requires the job line item backing the session's current
+		// segment; it is only reachable through the sessions query.
+		const sessions = await this.getParkingSessions(helpers, accessToken, 'CURRENT');
+		const session = (sessions ?? []).find(
+			(item: any) => item.parkingSessionId === parkingSessionId,
+		);
+		if (!session) {
+			throw new Error(`No active parking session found with id ${parkingSessionId}`);
+		}
+		const jobId = session.jobId;
+		const segments = session.segments ?? [];
+		const jobLineItemId = segments[segments.length - 1]?.jobLineItemId;
+		if (!jobLineItemId) {
+			throw new Error(
+				`Parking session ${parkingSessionId} has no segment carrying a jobLineItemId`,
+			);
+		}
+
+		const response = await helpers
+			.httpRequest({
+				method: 'POST',
+				url: this.GRAPHQL_URL,
+				headers: {
+					Authorization: `Bearer ${accessToken}`,
+					'x-pbp-clienttype': 'WebApp',
+					'Content-Type': 'application/json',
+					'x-pbp-workflowid': parkingSessionId,
+				},
+				body: {
+					operationName: null,
+					variables: {
+						input: { request: { parkingSessionId, jobId, jobLineItemId } },
+					},
+					query: QUERIES.STOP_PARKING_SESSION,
+				},
+			})
+			.catch(this.handleGraphQLError.bind(this));
+
+		const stopped = this.assertGraphQLData(response, 'stopParkingSessionV1');
+		return this.removeGraphQLMetadata(stopped.stopParkingSessionResponse);
+	}
+
 	async startParkingSession(
 		helpers: N8nHelpers,
 		accessToken: string,
